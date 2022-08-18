@@ -48,9 +48,14 @@ static struct fscache_object *cachefiles_alloc_object(
 	ASSERTCMP(object->backer, ==, NULL);
 
 	BUG_ON(test_bit(CACHEFILES_OBJECT_ACTIVE, &object->flags));
+
 	atomic_set(&object->usage, 1);
 
 	fscache_object_init(&object->fscache, cookie, &cache->cache);
+
+	if (cachefiles_ondemand_init_obj_info(object)) {
+		goto nomem_buffer;
+	}
 
 	object->type = cookie->def->type;
 
@@ -374,6 +379,7 @@ void cachefiles_put_object(struct fscache_object *_object,
 		}
 
 		cache = object->fscache.cache;
+		kfree(object->private);
 		fscache_object_destroy(&object->fscache);
 		kmem_cache_free(cachefiles_object_jar, object);
 		fscache_object_destroyed(cache);
