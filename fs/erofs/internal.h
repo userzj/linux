@@ -102,6 +102,10 @@ struct erofs_sb_lz4_info {
 struct erofs_fscache {
 	struct fscache_cookie *cookie;
 	struct inode *inode;
+	struct inode *anon_inode;
+	struct erofs_domain *domain;
+	refcount_t ref;
+	char *name;
 };
 
 struct erofs_sb_info {
@@ -626,6 +630,8 @@ int erofs_fscache_register_domain(struct super_block *sb);
 int erofs_fscache_register_cookie(struct super_block *sb,
 				  struct erofs_fscache **fscache,
 				  char *name, bool need_inode);
+int erofs_domain_register_cookie(struct super_block *sb,
+				 struct erofs_fscache **fscache, char *name, bool need_inode);
 void erofs_fscache_unregister_cookie(struct erofs_fscache **fscache);
 
 extern const struct address_space_operations erofs_fscache_access_aops;
@@ -644,6 +650,11 @@ static inline int erofs_fscache_register_domain(const struct super_block *sb)
 static inline int erofs_fscache_register_cookie(struct super_block *sb,
 						struct erofs_fscache **fscache,
 						char *name, bool need_inode)
+{
+	return -EOPNOTSUPP;
+}
+static inline int erofs_domain_register_cookie(struct super_block *sb,
+				 struct erofs_fscache **fscache, char *name, bool need_inode)
 {
 	return -EOPNOTSUPP;
 }

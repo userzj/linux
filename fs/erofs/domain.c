@@ -11,6 +11,73 @@
 static DEFINE_SPINLOCK(erofs_domain_list_lock);
 static LIST_HEAD(erofs_domain_list);
 
+static int erofs_fscache_domain_init_cookie(struct super_block *sb,
+		struct erofs_fscache **fscache, char *name, bool need_inode)
+{
+	int ret;
+	struct inode *inode;
+	struct erofs_fscache *ctx;
+	struct erofs_sb_info *sbi = EROFS_SB(sb);
+	struct erofs_domain *domain = sbi->domain;
+
+	ret = erofs_fscache_register_cookie(sb, &ctx, name, need_inode);
+	if (ret)
+		return ret;
+
+	ctx->name = kstrdup(name, GFP_KERNEL);
+	if (!ctx->name) {
+		ret = -ENOMEM;
+		goto err;
+	}
+
+	inode = new_inode(domain->mnt->mnt_sb);
+	if (!inode) {
+		kfree(ctx->name);
+		goto err;
+	}
+
+	ctx->domain = domain;
+	ctx->anon_inode = inode;
+	inode->i_private = ctx;
+	refcount_set(&ctx->ref, 1);
+	erofs_fscache_domain_get(domain);
+	*fscache = ctx;
+	return 0;
+
+err:
+	erofs_fscache_unregister_cookie(&ctx);
+	return ret;
+}
+
+int erofs_domain_register_cookie(struct super_block *sb,
+	struct erofs_fscache **fscache, char *name, bool need_inode)
+{
+	int err;
+	struct inode *inode;
+	struct erofs_fscache *ctx;
+	struct erofs_sb_info *sbi = EROFS_SB(sb);
+	struct erofs_domain *domain = sbi->domain;
+	struct super_block *psb = domain->mnt->mnt_sb;
+
+	mutex_lock(&domain->mutex);
+	list_for_each_entry(inode, &psb->s_inodes, i_sb_list) {
+		ctx = inode->i_private;
+		if (!ctx)
+			continue;
+		if (!strcmp(ctx->name, name)) {
+			*fscache = ctx;
+			refcount_inc(&ctx->ref);
+			mutex_unlock(&domain->mutex);
+			return 0;
+		}
+	}
+	err = erofs_fscache_domain_init_cookie(sb, fscache, name,
+				need_inode);
+	mutex_unlock(&domain->mutex);
+
+	return err;
+}
+
 void erofs_fscache_domain_get(struct erofs_domain *domain)
 {
 	if (!domain)

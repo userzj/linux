@@ -476,6 +476,8 @@ void erofs_fscache_unregister_cookie(struct erofs_fscache **fscache)
 
 	if (!ctx)
 		return;
+	if (ctx->domain && !refcount_dec_and_test(&ctx->ref))
+		return;
 
 	fscache_unuse_cookie(ctx->cookie, NULL, NULL);
 	fscache_relinquish_cookie(ctx->cookie, false);
@@ -483,7 +485,12 @@ void erofs_fscache_unregister_cookie(struct erofs_fscache **fscache)
 
 	iput(ctx->inode);
 	ctx->inode = NULL;
+	iput(ctx->anon_inode);
+	ctx->anon_inode = NULL;
+	erofs_fscache_domain_put(ctx->domain);
 
+	kfree(ctx->name);
+	ctx->name = NULL;
 	kfree(ctx);
 	*fscache = NULL;
 }
