@@ -688,6 +688,13 @@ static const struct export_operations erofs_export_ops = {
 	.get_parent = erofs_get_parent,
 };
 
+static int erofs_fc_fill_pseudo_super(struct super_block *sb, struct fs_context *fc)
+{
+	static const struct tree_descr empty_descr = {""};
+
+	return simple_fill_super(sb, EROFS_SUPER_MAGIC, &empty_descr);
+}
+
 static int erofs_fc_fill_super(struct super_block *sb, struct fs_context *fc)
 {
 	struct inode *inode;
@@ -715,12 +722,17 @@ static int erofs_fc_fill_super(struct super_block *sb, struct fs_context *fc)
 		sb->s_blocksize = EROFS_BLKSIZ;
 		sb->s_blocksize_bits = LOG_BLOCK_SIZE;
 
-		err = erofs_fscache_register_fs(sb);
-		if (err)
-			return err;
-
-		err = erofs_fscache_register_cookie(sb, &sbi->s_fscache,
-						    sbi->opt.fsid, true);
+		if (sbi->opt.domain_id) {
+			err = erofs_fscache_register_domain(sb);
+			if (err)
+				return err;
+		} else {
+			err = erofs_fscache_register_fs(sb);
+			if (err)
+				return err;
+			err = erofs_fscache_register_cookie(sb, &sbi->s_fscache,
+					sbi->opt.fsid, true);
+		}
 		if (err)
 			return err;
 
@@ -798,8 +810,12 @@ static int erofs_fc_get_tree(struct fs_context *fc)
 {
 	struct erofs_fs_context *ctx = fc->fs_private;
 
-	if (IS_ENABLED(CONFIG_EROFS_FS_ONDEMAND) && ctx->opt.fsid)
-		return get_tree_nodev(fc, erofs_fc_fill_super);
+	if (IS_ENABLED(CONFIG_EROFS_FS_ONDEMAND)) {
+		if (!ctx && fc->sb_flags & SB_KERNMOUNT)
+			return get_tree_nodev(fc, erofs_fc_fill_pseudo_super);
+		if (ctx->opt.fsid)
+			return get_tree_nodev(fc, erofs_fc_fill_super);
+	}
 
 	return get_tree_bdev(fc, erofs_fc_fill_super);
 }
@@ -849,6 +865,8 @@ static void erofs_fc_free(struct fs_context *fc)
 {
 	struct erofs_fs_context *ctx = fc->fs_private;
 
+	if (!ctx)
+		return;
 	erofs_free_dev_context(ctx->devs);
 	kfree(ctx->opt.fsid);
 	kfree(ctx->opt.domain_id);
@@ -864,8 +882,12 @@ static const struct fs_context_operations erofs_context_ops = {
 
 static int erofs_init_fs_context(struct fs_context *fc)
 {
-	struct erofs_fs_context *ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
+	struct erofs_fs_context *ctx;
 
+	if (fc->sb_flags & SB_KERNMOUNT)
+		goto out;
+
+	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
 		return -ENOMEM;
 	ctx->devs = kzalloc(sizeof(struct erofs_dev_context), GFP_KERNEL);
@@ -878,6 +900,7 @@ static int erofs_init_fs_context(struct fs_context *fc)
 	idr_init(&ctx->devs->tree);
 	init_rwsem(&ctx->devs->rwsem);
 	erofs_default_options(ctx);
+out:
 	fc->ops = &erofs_context_ops;
 	return 0;
 }
@@ -892,6 +915,10 @@ static void erofs_kill_sb(struct super_block *sb)
 
 	WARN_ON(sb->s_magic != EROFS_SUPER_MAGIC);
 
+	if (sb->s_flags & SB_KERNMOUNT) {
+		kill_litter_super(sb);
+		return;
+	}
 	if (erofs_is_fscache_mode(sb))
 		generic_shutdown_super(sb);
 	else
@@ -916,8 +943,8 @@ static void erofs_put_super(struct super_block *sb)
 {
 	struct erofs_sb_info *const sbi = EROFS_SB(sb);
 
-	DBG_BUGON(!sbi);
-
+	if (!sbi)
+		return;
 	erofs_unregister_sysfs(sb);
 	erofs_shrinker_unregister(sb);
 #ifdef CONFIG_EROFS_FS_ZIP
@@ -927,7 +954,7 @@ static void erofs_put_super(struct super_block *sb)
 	erofs_fscache_unregister_cookie(&sbi->s_fscache);
 }
 
-static struct file_system_type erofs_fs_type = {
+struct file_system_type erofs_fs_type = {
 	.owner          = THIS_MODULE,
 	.name           = "erofs",
 	.init_fs_context = erofs_init_fs_context,
