@@ -919,19 +919,20 @@ static void erofs_kill_sb(struct super_block *sb)
 		kill_litter_super(sb);
 		return;
 	}
-	if (erofs_is_fscache_mode(sb))
-		generic_shutdown_super(sb);
-	else
-		kill_block_super(sb);
-
 	sbi = EROFS_SB(sb);
 	if (!sbi)
 		return;
 
+	if (erofs_is_fscache_mode(sb)) {
+		erofs_fscache_unregister_cookie(&sbi->s_fscache);
+		erofs_fscache_unregister_fs(sb);
+		generic_shutdown_super(sb);
+	} else {
+		kill_block_super(sb);
+	}
+
 	erofs_free_dev_context(sbi->devs);
 	fs_put_dax(sbi->dax_dev, NULL);
-	erofs_fscache_unregister_cookie(&sbi->s_fscache);
-	erofs_fscache_unregister_fs(sb);
 	kfree(sbi->opt.fsid);
 	kfree(sbi->opt.domain_id);
 	kfree(sbi);
@@ -951,7 +952,6 @@ static void erofs_put_super(struct super_block *sb)
 	iput(sbi->managed_cache);
 	sbi->managed_cache = NULL;
 #endif
-	erofs_fscache_unregister_cookie(&sbi->s_fscache);
 }
 
 struct file_system_type erofs_fs_type = {
