@@ -18,6 +18,7 @@
 #include <linux/cred.h>
 #include <linux/workqueue.h>
 #include <linux/security.h>
+#include <linux/netfs.h>
 
 struct cachefiles_cache;
 struct cachefiles_object;
@@ -225,6 +226,16 @@ extern void cachefiles_uncache_page(struct fscache_object *, struct page *);
  */
 extern int cachefiles_begin_read_operation(struct netfs_read_request *,
 					   struct fscache_retrieval *);
+
+extern int __cachefiles_write(struct cachefiles_object *object,
+		       struct file *file,
+		       loff_t start_pos,
+		       struct iov_iter *iter,
+		       netfs_io_terminated_t term_func,
+		       void *term_func_priv);
+
+extern int cachefiles_prepare_write(struct netfs_cache_resources *cres,
+				    loff_t *_start, size_t *_len, loff_t i_size);
 
 /*
  * security.c
